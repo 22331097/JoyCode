@@ -2,6 +2,20 @@
 
 This is the README for your extension "joycode". After writing up a brief description, we recommend including the following sections.
 
+## Structure
+
+📂 JoyCode
+├── 📁 src
+│   ├── codeCompletion.js        # 代码补全
+│   ├── aiChatCodeGen.js         # AI 对话生成代码
+│   ├── commentToCode.js         # 根据注释生成代码
+│   ├── openaiClient.js          # OpenAI API 客户端封装
+│   ├── tool.js                 # 工具函数
+├── extension.js                 # 入口文件，加载各个功能模块
+├── package.json
+├── package-lock.json
+└── README.md
+
 ## Features
 
 Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
