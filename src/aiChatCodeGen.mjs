@@ -54,39 +54,51 @@ class ChatViewProvider {
       });
     this.loadSystemPrompt();
     vscode.commands.registerCommand('chatCodeGen.selectHistorySession', async () => {
-      
       if (!fs.existsSync(this.chatHistoryPath)) {
         vscode.window.showInformationMessage('没有保存的历史聊天记录。');
         return;
       }
-
       try {
         const fileContent = fs.readFileSync(this.chatHistoryPath, 'utf-8');
         const allSessions = JSON.parse(fileContent || '{}');
-
         const items = Object.entries(allSessions).map(([sessionId, session]) => ({
           label: session.title || `未命名会话 `,
           sessionId: sessionId,
           history: session.history,
-          title: session.title 
+          title: session.title,
+          alwaysShow: true
         }));
-
         const selected = await vscode.window.showQuickPick(items, {
           placeHolder: '选择一个历史会话标题',
+          canPickMany: false
         });
-
         if (selected) {
-          this.sessionId = selected.sessionId;
-          this.chatTitle = selected.title;
-          this.chatHistory = selected.history || [];
-          console.log('选择的历史:', selected.history);
-          // 通知 Webview 渲染历史会话       
-            this.webviewView.webview.postMessage({
-              command: 'loadHistorySession',
-              sessionId: selected.sessionId,
-              title: selected.label,
-              history: selected.history
-            });
+          // 弹出操作菜单
+          const action = await vscode.window.showQuickPick([
+            { label: '继续此会话', action: 'open' },
+            { label: '删除此对话记录', action: 'delete' }
+          ], { placeHolder: `对“${selected.label}”进行操作` });
+          if (action && action.action === 'delete') {
+            // 删除会话
+            delete allSessions[selected.sessionId];
+            fs.writeFileSync(this.chatHistoryPath, JSON.stringify(allSessions, null, 2), 'utf-8');
+            vscode.window.showInformationMessage(`已删除会话“${selected.label}”`);
+            // 递归刷新
+            vscode.commands.executeCommand('chatCodeGen.selectHistorySession');
+            return;
+          } else if (action && action.action === 'open') {
+            this.sessionId = selected.sessionId;
+            this.chatTitle = selected.title;
+            this.chatHistory = selected.history || [];
+            if (this.webviewView) {
+              this.webviewView.webview.postMessage({
+                command: 'loadHistorySession',
+                sessionId: selected.sessionId,
+                title: selected.label,
+                history: selected.history
+              });
+            }
+          }
         }
       } catch (err) {
         vscode.window.showErrorMessage('加载聊天记录失败: ' + err.message);
@@ -158,12 +170,20 @@ class ChatViewProvider {
     const editor = vscode.window.activeTextEditor || this.lastActiveEditor;
     if (editor) {
       const document = editor.document;
-      this.fileContent = document.getText();
+      const totalLines = document.lineCount;
+      const selection = editor.selection;
+      const cursorLine = selection.active.line;
+      const startLine = Math.max(0, cursorLine - 200);
+      const endLine = Math.min(totalLines - 1, cursorLine + 200);
+      let snippet = '';
+      for (let i = startLine; i <= endLine; i++) {
+        snippet += document.lineAt(i).text + '\n';
+      }
+      this.fileContent = snippet;
       this.filePath = document.uri.fsPath;
       const fileName = path.basename(this.filePath);
       const fileType = document.languageId;
       this.lastActiveEditor = editor;
-      
       if (this.webviewView) {
         this.webviewView.webview.postMessage({
           command: 'fileInfo',
@@ -176,7 +196,13 @@ class ChatViewProvider {
       const documents = vscode.workspace.textDocuments;
       if (documents.length > 0) {
         const document = documents[0];
-        this.fileContent = document.getText();
+        // 默认取前 100 行
+        let snippet = '';
+        const maxLines = Math.min(100, document.lineCount);
+        for (let i = 0; i < maxLines; i++) {
+          snippet += document.lineAt(i).text + '\n';
+        }
+        this.fileContent = snippet;
         this.filePath = document.uri.fsPath;
       } else {
         this.fileContent = '当前没有活动的编辑器，无法读取文件内容。';
@@ -342,6 +368,9 @@ class ChatViewProvider {
     });
   }
   
+  
+
+
   async handleAiRequest(message, webviewView) {
     const userInput = message.text;
     this.model= message.model; // 获取当前模型
@@ -383,13 +412,17 @@ class ChatViewProvider {
       this.chatHistory = this.chatHistory.slice(-50);
     }
     this.saveChatHistory();
-    
+     
     // 准备上下文提示
     let contextPrompt = '';
     if (this.contextFiles.length > 0) {
       contextPrompt = this.contextFiles.map(f =>
         `【上下文文件】${f.fileName}\n路径: ${f.filePath}\n内容:\n${f.fileContent}\n`
       ).join('\n');
+    }
+    else{
+      contextPrompt = '当前没有可用的上下文代码文件，仅根据用户提问的问题回答';
+
     }
     
     try {
@@ -536,11 +569,11 @@ class ChatViewProvider {
 
           // 解析响应
           if (!response.ok) {
-              throw new Error(`Flask 服务返回错误状态码: ${response.status}`);
+              throw new Error(`后端服务器返回错误状态码: ${response.status}`);
           }
 
           const responseData = await response.json();
-          reply = responseData.response || 'Flask 服务未返回有效内容。';
+          reply = responseData.response || '后端模型服务未返回有效回复！';
           
     }
       this.chatHistory.push({
@@ -626,6 +659,10 @@ class ChatViewProvider {
         `【上下文文件】${f.fileName}\n路径: ${f.filePath}\n内容:\n${f.fileContent}\n`
       ).join('\n');
     }
+       else{
+      contextPrompt = '当前没有可用的上下文代码文件，仅根据用户提问的问题回答';
+    }
+    
     
     try {
       const isFirstQuestion =this.chatHistory.length === 1 && this.chatHistory[0].role === 'user' && !this.chatTitle;
@@ -776,3 +813,4 @@ class ChatViewProvider {
 }
 
 export default ChatViewProvider;
+
