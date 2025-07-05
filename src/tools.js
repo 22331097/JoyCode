@@ -4,6 +4,9 @@ const { exec } = require('child_process');
 const Parser = require('tree-sitter');
 const Cpp = require('tree-sitter-cpp');
 const Python = require('tree-sitter-python');
+const Java = require('tree-sitter-java');
+const JavaScript = require('tree-sitter-javascript');
+
 
 function detectLanguage(code, languageId) {
   if (languageId) return languageId; 
@@ -30,165 +33,383 @@ function getTempFilePath(lang) {
     default: return `${base}.txt`;
   }
 }
+
+function getDefaultValueFromType(type) {
+  if (!type) return '0';
+  let rawType = type.trim()
+    .replace(/\s*<\s*/g, '<')
+    .replace(/\s*>\s*/g, '>')
+    .replace(/\s*\*\s*/g, '*')
+    .replace(/\s*,\s*/g, ',')
+    .replace(/\s+/g, ' ');
+  const lower = rawType.toLowerCase();
+
+  // 基础类型
+  if (['int', 'long', 'short'].some(t => lower === t || lower.startsWith(t + ' '))) return '1';
+  if (['float', 'double'].some(t => lower === t || lower.startsWith(t + ' '))) return '1.0';
+  if (['string', 'std::string', 'str'].some(t => lower === t || lower.startsWith(t + ' '))) return '"test"';
+  if (['bool', 'boolean'].includes(lower)) return 'false';
+
+  //特殊类型
+    // 指针类型判断
+  if (rawType.endsWith('*') || rawType.includes('*')) {
+    if (/char\*$/i.test(rawType)) return '"test"';
+    if (/^[A-Z].*\*$/.test(rawType)) {
+      return `new ${rawType.replace('*', '').trim()}()`;
+    }
+    return 'nullptr';
+  }
+    // vector 或数组
+  if (/vector<.*>/i.test(rawType) || /\[\d*\]$/.test(rawType)) {
+    const elementType = rawType.replace(/(std::)?vector<|>|\[.*\]/gi, '').trim();
+    const defaultVal = getDefaultValueFromType(elementType);
+    return `{${defaultVal}, ${defaultVal}}`;
+  }
+    // 自定义类型非指针
+  if (/^[A-Z]/.test(rawType)) {
+    return `${rawType}()`;
+  }
+
+  return '0';
+}
+
+
+
+
+function getPythonFunctionParams(code) {
+  const parser = new Parser();
+  parser.setLanguage(Python);
+  const tree = parser.parse(code);
+  const funcNode = tree.rootNode.descendantsOfType('function_definition')[0];
+  if (!funcNode) return null;
+
+  const params = funcNode.childForFieldName('parameters');
+  if (!params) return [];
+
+  const args = [];
+  for (const param of params.namedChildren) {
+    const nameNode = param.childForFieldName('name');
+    const typeNode = param.childForFieldName('type');
+    const type = typeNode ? typeNode.text : 'int'; // fallback 类型
+    args.push(getDefaultValueFromType(type));
+  }
+
+  const name = funcNode.childForFieldName('name')?.text || 'func';
+  return { name, args };
+}
+
+
+
+function getJavaFunctionParams(code) {
+  const parser = new Parser();
+  parser.setLanguage(Java);
+  const tree = parser.parse(code);
+  const funcNode = tree.rootNode.descendantsOfType('method_declaration')[0];
+  if (!funcNode) return null;
+
+  const paramList = funcNode.childForFieldName('parameters');
+  const args = [];
+
+  if (paramList) {
+    for (const param of paramList.namedChildren) {
+      const typeNode = param.child(0); // 一般第一个 child 是类型
+      const type = typeNode ? typeNode.text : 'int';
+      args.push(getDefaultValueFromType(type));
+    }
+  }
+
+  const name = funcNode.childForFieldName('name')?.text || 'func';
+  return { name, args };
+}
+
+
+
+function getJSFunctionParams(code) {
+  const parser = new Parser();
+  parser.setLanguage(JavaScript);
+  const tree = parser.parse(code);
+  const funcNode = tree.rootNode.descendantsOfType('function_declaration')[0];
+  if (!funcNode) return null;
+
+  const paramList = funcNode.childForFieldName('parameters');
+  const args = [];
+
+  if (paramList) {
+    for (const param of paramList.namedChildren) {
+      // JS 没类型信息，只能用默认类型
+      args.push('"test"');
+    }
+  }
+
+  const name = funcNode.childForFieldName('name')?.text || 'func';
+  return { name, args };
+}
+
+
+
+function replaceCinWithConst(code, value = 1) {
+
+  const parser = new Parser();
+  parser.setLanguage(Cpp);
+  const tree = parser.parse(code);
+  const edits = [];
+
+  function walk(node) {
+    if (node.type === 'expression_statement') {
+      const text = node.text;
+      // 判断是否包含 std::cin 和 >>
+      if (text.includes('std::cin') && text.includes('>>')) {
+        const vars = [...text.matchAll(/>>\s*(\w+)/g)].map(m => m[1]);
+        if (vars.length > 0) {
+          const replacement = vars.map(v => `${v} = ${value};`).join('\n');
+          edits.push({
+            start: node.startIndex,
+            end: node.endIndex,
+            replacement
+          });
+        }
+      }
+    }
+
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i));
+    }
+  }
+
+  walk(tree.rootNode);
+
+  // 按照倒序替换，避免偏移
+  let newCode = code;
+  edits.sort((a, b) => b.start - a.start);
+  for (const edit of edits) {
+    newCode =
+      newCode.slice(0, edit.start) +
+      edit.replacement +
+      newCode.slice(edit.end);
+  }
+  if (edits.length === 0) {
+    return replaceCinWithConstPlus(code, value); 
+  }
+  return newCode;
+}
+  
+//正则兜底
+function replaceCinWithConstPlus(code, value = 1) {
+  return code.replace(/std::cin\s*>>\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\s*>>\s*[a-zA-Z_][a-zA-Z0-9_]*)*)\s*;/g, (match, vars) => {
+    return vars.split('>>').map(v => v.trim() + ' = ' + value + ';').join(' ');
+  });
+}
+
+function autoAddCommonIncludes(code) {
+  const commonHeadersText = `\
+#include <iostream>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <vector>
+#include <map>
+#include <unordered_map>
+#include <set>
+#include <algorithm>
+#include <cmath>
+#include <cassert>
+#include <functional>
+#include <memory>
+#include <thread>
+#include <mutex>
+#include <chrono>
+`;
+
+  return commonHeadersText + '\n' + code;
+}
+
+
 //检查补全的代码是否为函数
 function wrapCppFunctionForTest(code,lang) {
 
   switch (lang) {
-    case 'python':
-      // 检查是否已有 main 测试代码
+
+    case 'python': {
       if (/if\s+__name__\s*==\s*['"]__main__['"]/.test(code)) return code;
+      const funcInfo = getPythonFunctionParams(code);
+      if (!funcInfo) return code;
 
-      // 简单提取函数名和参数
-      const pyMatch = code.match(/def\s+(\w+)\s*\(([^)]*)\)/);
-      if (!pyMatch) return code;
-      const pyfuncName = pyMatch[1];
-      // 生成参数填充 0
-      const pyparams = pyMatch[2].split(',').map(p => p.trim() ? '0' : '').filter(Boolean).join(', ');
-
-      // 生成 main 测试代码
-      const pytestMain = `
+      const { name, args } = funcInfo;
+      const testMain = `
 if __name__ == "__main__":
-    print("Test result:", ${pyfuncName}(${pyparams}))
-        `;
-      return code + '\n' + pytestMain;
-    case 'javascript':
-      // 检查是否有 main 测试代码
-      if (/console\.log\(/.test(code)) return code;
+print("Test result:", ${name}(${args.join(', ')}))
+      `;
+      return code + '\n' + testMain;
+    }
 
-      // 简单提取函数名和参数
-      const jsMatch = code.match(/function\s+(\w+)\s*\(([^)]*)\)/);
-      if (!jsMatch) return code;
-      const jsfuncName = jsMatch[1];
-      const jsparams = jsMatch[2].split(',').map(p => p.trim() || '0').join(', ');
-      // 生成 main 测试代码
-      const jstestMain = `console.log("Test result:", ${jsfuncName}(${jsparams}));`;
-      return code + '\n' + jstestMain;
-    case 'java':
-      // Java 需要检查是否有 main 方法
+    case 'javascript': {
+      if (/console\.log\(/.test(code)) return code;
+      const funcInfo = getJSFunctionParams(code);
+      if (!funcInfo) return code;
+
+      const { name, args } = funcInfo;
+      const testMain = `console.log("Test result:", ${name}(${args.join(', ')}));`;
+      return code + '\n' + testMain;
+    }
+
+    case 'java': {
       if (/public\s+static\s+void\s+main\s*\(/.test(code)) return code;
-      // 简单提取函数名和参数
-      const javaMatch = code.match(/(\w+)\s+(\w+)\s*\(([^)]*)\)/);
-      if (!javaMatch) return code; // 不是函数，直接返回
-      const javafuncName = javaMatch[2];
-      const javaparams = javaMatch[3].split(',').map(p => p.trim().split(' ')[1] || '0').join(', ');
-      // 生成 main 测试代码
-      const javatestMain = `
+      const funcInfo = getJavaFunctionParams(code);
+      if (!funcInfo) return code;
+
+      const { name, args } = funcInfo;
+      const testMain = `
 public class Test {
     public static void main(String[] args) {
-        ${javafuncName}(${javaparams});
+        System.out.println(${name}(${args.join(', ')}));
     }
 }
       `;
-      return code + '\n' + javatestMain;
-    case 'cpp':
-          // 检查是否有 main 函数
+      return code + '\n' + testMain;
+    }
+
+    case 'cpp': {
+      // 测试类型映射正确性（可选，开发调试时保留）
+      [
+        "int", 
+        "float", 
+        "bool", 
+        "string", 
+        "std::string", 
+        "const char*", 
+        "char*", 
+        "int*", 
+        "std::vector<int>", 
+        "MyClass", 
+        "MyClass*"
+      ].forEach(t => {
+        console.log(`${t} => ${getDefaultValueFromType(t)}`);
+      });
+
+      code = replaceCinWithConst(code);
+
+      // 如果已有 main 函数，直接返回
       if (/int\s+main\s*\(/.test(code)) return code;
 
-      // 用 tree-sitter 获取第一个非 main 的函数定义
       const parser = new Parser();
       parser.setLanguage(Cpp);
       const tree = parser.parse(code);
       const funcNodes = tree.rootNode.descendantsOfType('function_definition');
       if (!funcNodes.length) return code;
 
-      // 调试输出所有函数名
-      for (const node of funcNodes) {
-        const decl = node.childForFieldName('declarator');
-        if (!decl) continue; // 没有 declarator，跳过
-        const idNode = decl ? decl.descendantsOfType('identifier')[0] : null;
-        if (idNode) console.log('发现函数:', idNode.text);
-      }
-
-      // 找到第一个非 main 的函数
+      // // 找第一个非 main 的函数
       let funcNode = funcNodes[0];
-      for (const node of funcNodes) {
-        const decl = node.childForFieldName('declarator');
-        const idNode = decl ? decl.descendantsOfType('identifier')[0] : null;
-        if (idNode && idNode.text !== 'main') {
-          funcNode = node;
-          break;
-        }
-      }
+      // for (const node of funcNodes) {
+      //   const decl = node.childForFieldName('declarator');
+      //   const idNode = decl ? decl.descendantsOfType('identifier')[0] : null;
+      //   if (idNode && idNode.text !== 'main') {
+      //     funcNode = node;
+      //     break;
+      //   }
+      // }
+      console.log(funcNode.toString());
+      // 获取函数参数
+      
+      const args = [];
+      const charPtrBuffers = []; 
 
-      // 获取参数数量
-      const paramList = funcNode.childForFieldName('parameters');
-      let paramCount = 0;
-      let cppparams = '';
-      if (paramList) {
-        paramCount = paramList.namedChildCount;
-        if (paramCount > 0) {
-          cppparams = Array(paramCount).fill('1').join(', ');
-        }
-      }
-      // fallback: 如果参数数量为0，尝试用正则兜底
-      if (paramCount === 0) {
+      let declNode = funcNode.childForFieldName('declarator'); // pointer_declarator
+      // pointer_declarator 内部的 declarator 是 function_declarator
+      const funcDeclNode = declNode?.childForFieldName('declarator'); // function_declarator
+      const paramList = funcDeclNode?.childForFieldName('parameters');
+
+      function collectTypeTokens(node, tokens = []) {
+  const allowedTypes = new Set([
+    'type_identifier',
+    'primitive_type',
+    'template_type',
+    'qualified_identifier',
+    'type_qualifier',
+    'reference',
+    'const',
+  ]);
+
+  if (allowedTypes.has(node.type) || node.text === '*' || node.text === '&') {
+    tokens.push(node.text);
+  }
+
+  // 递归遍历所有子节点
+  for (let i = 0; i < node.childCount; i++) {
+    collectTypeTokens(node.child(i), tokens);
+  }
+
+  return tokens;
+}
+
+// 使用示例
+if (paramList) {
+  for (const param of paramList.namedChildren) {
+    const typeTokens = collectTypeTokens(param);
+    let type = typeTokens.join(' ').trim();
+
+    type = type
+      .replace(/\s*<\s*/g, '<')
+      .replace(/\s*>\s*/g, '>')
+      .replace(/\s*\*\s*/g, '*')
+      .replace(/\s*,\s*/g, ',')
+      .replace(/\s+/g, ' ');
+    const defaultVal = getDefaultValueFromType(type);
+    console.log('Parsed param type:', type);
+    if (/^char\s*\*$/i.test(type)) {
+      const varName = `charBuffer${idx}`;
+      charPtrBuffers.push(`char ${varName}[100] = "test";`);
+      args.push(varName);
+    } else {
+      args.push(defaultVal);
+    }
+  }
+} else {
+  console.log('No parameters found!');
+}
+
+
+
+      // fallback：正则兜底处理
+      if (args.length === 0) {
         const funcText = funcNode.text;
         const match = funcText.match(/\(([^)]*)\)/);
         if (match && match[1].trim()) {
           const paramListRaw = match[1].split(',').map(s => s.trim()).filter(Boolean);
           if (paramListRaw.length > 0) {
-            cppparams = Array(paramListRaw.length).fill('1').join(', ');
+            args.push(...Array(paramListRaw.length).fill('1'));
           }
         }
       }
+
       // 获取函数名
-      const declNode = funcNode.childForFieldName('declarator');
+      declNode = funcNode.childForFieldName('declarator');
       let cppfuncName = 'func';
       if (declNode) {
         const idNode = declNode.descendantsOfType('identifier')[0];
         if (idNode) cppfuncName = idNode.text;
       }
 
-      // 自动加 #include <iostream>
-      let codeWithInclude = code;
-      if (!/^\s*#include\s*<iostream>/m.test(code)) {
-        codeWithInclude = `#include <iostream>\n${code}`;
-      }
+      // 加头文件
+      let codeWithInclude = autoAddCommonIncludes(code);
 
-      // 生成 main 测试代码
+      // 生成 main 函数
       const cpptestMain = `
 int main() {
-  auto result = ${cppfuncName}(${cppparams});
+  auto result = ${cppfuncName}(${args.join(', ')});
   std::cout << "Test result: " << result << std::endl;
   return 0;
 }
-    `;
-      return codeWithInclude + '\n' + cpptestMain;
-    default:
-      // 对于其他语言，直接返回原代码
-      return code;
-  }
+  `;
 
-  
+      return codeWithInclude + '\n' + cpptestMain;
+    }
+
+  }
 }
 
 
 
-// function getCppFunctionParams(code) {
-//   const parser = new Parser();
-//   parser.setLanguage(Cpp);
-
-//   const tree = parser.parse(code);
-//   const funcNode = tree.rootNode.descendantsOfType('function_definition')[0];
-//   if (!funcNode) return [];
-
-//   // 找到参数列表
-//   const paramList = funcNode.childForFieldName('parameters');
-//   if (!paramList) return [];
-
-//   // 提取参数名
-//   const params = [];
-//   for (let i = 0; i < paramList.namedChildCount; i++) {
-//     const param = paramList.namedChild(i);
-//     const decl = param.descendantsOfType('identifier')[0];
-//     if (decl) params.push(decl.text);
-//   }
-//   return params;
-// }
-
-// function generateCppInput(params) {
-//   return params.map(() => '1').join(' ');
-// }
 
 function runCode(lang, code) {
   return new Promise((resolve) => {
@@ -301,3 +522,4 @@ module.exports = {
   runCode,
   extractStructureSummary
 };
+
