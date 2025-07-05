@@ -16,7 +16,10 @@
     "onLanguage:python",
     "onLanguage:java",
     "onLanguage:c",
-    "onLanguage:cpp"
+    "onLanguage:cpp",
+    "onCommand:navicode.configureCustomModels",
+    "onCommand:navicode.switchModel",
+    "onCommand:navicode.openChat"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -149,6 +152,29 @@
           "type": "string",
           "default": "default",
           "description": "当前激活的模板 ID"
+        },
+        "navicode.customModels": {
+          "type": "array",
+          "default": [],
+          "description": "用户自定义模型配置列表",
+          "items": {
+            "type": "object",
+            "properties": {
+              "modelName": {
+                "type": "string"
+              },
+              "baseURL": {
+                "type": "string"
+              },
+              "apiKey": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              }
+            },
+            "required": ["modelName", "baseURL", "apiKey", "model"]
+          }
         }
       }
     },
@@ -206,6 +232,22 @@
         "title": "切换 AI 模型"
       },
       {
+        "command": "navicode.configureCustomModels",
+        "title": "NaviCode: 添加自定义模型"
+      },
+      {
+        "command": "navicode.viewCurrentModelInfo",
+        "title": "NaviCode: 查看当前模型信息"
+      },
+      {
+        "command": "navicode.deleteCustomModel",
+        "title": "NaviCode: 删除自定义模型"
+      },
+      {
+        "command": "navicode.editCustomModel",
+        "title": "NaviCode: 编辑自定义模型"
+      },
+      {
         "command": "navicode.configureTemplate",
         "title": "NaviCode: 用户自定义全局提示词模板"
       },
@@ -244,6 +286,13 @@
         {
           "command": "extension.showTempArea",
           "when": "editorHasSelection"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "navicode.configureCustomModels",
+          "command": "navicode.viewCurrentModelInfo"
+
         }
       ]
     }

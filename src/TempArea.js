@@ -1,8 +1,28 @@
-const { getOpenAIInstance, getSelectedModel } = require('./openaiClient');
+const { getOpenAIInstance, getSelectedModel ,modelConfigs} = require('./openaiClient');
 const vscode = require('vscode');
 
 let tempAreaContent = '';
 let tempAreaPanel = null;
+
+
+function getModelConfig() {
+  const config = vscode.workspace.getConfiguration('navicode');
+  const selectedModel = getSelectedModel();
+
+  // 查找内置模型
+  if (modelConfigs[selectedModel]) {
+    return modelConfigs[selectedModel];
+  }
+
+  // 查找自定义模型
+  const customModels = config.get('customModels', []);
+  const customModel = customModels.find(m => m.modelName === selectedModel);
+  if (customModel) {
+    return customModel;
+  }
+
+  return null;
+}
 
 function addToTempArea(selectedText) {
   tempAreaContent += selectedText + '\n';
@@ -38,7 +58,7 @@ function registerMessageListener(panel) {
   panel.webview.onDidReceiveMessage((message) => {
     if (message.type === 'saveContent') {
       tempAreaContent = message.text || '';
-      vscode.window.showInformationMessage('临时记忆区内容变更已保存 ✅');
+      vscode.window.showInformationMessage('临时记忆区内容变更已保存 ');
     }
   });
 }
@@ -137,14 +157,46 @@ function activateTempArea(context) {
         }
         const prompt = `上下文信息：\n${tempAreaContent}\n\n当前内容：\n${selectedText}\n\n请根据这些信息生成代码，只输出代码本身。`;
         const openai = getOpenAIInstance();
-        const model = getSelectedModel();
+        const modelConfig = getModelConfig();
+        if (!modelConfig) {
+          vscode.window.showErrorMessage(`未找到模型配置: ${getSelectedModel()}`);
+          return;
+        }
+        const model = modelConfig.model;
+        console.log('OpenAI实例 baseURL:', openai.baseURL);
+        console.log('选中模型:', getSelectedModel());
+        console.log('当前模型:', model);
         try {
-          const response = await openai.completions.create({
-            model: model,
-            prompt: prompt,
-            max_tokens: 1500
-          });
-          const generatedCode = response.choices[0]?.text.trim();
+          // const response = await openai.completions.create({
+          //   model: model,
+          //   prompt: prompt,
+          //   max_tokens: 1500
+          // });
+          // const generatedCode = response.choices[0]?.text.trim();
+
+
+
+          let response,generatedCode;
+          
+          if (!model) {
+            response=openai.responses.create({
+              model: model,
+              input: prompt,
+              store: true
+            });
+          generatedCode = response;
+          }else{
+            response = await openai.chat.completions.create({
+              model: model,
+              messages: [
+                { role: 'system', content: `你是一个代码生成助手` },
+                { role: 'user', content: prompt }
+              ],
+              max_tokens: 1500
+            });
+            generatedCode = response.choices[0]?.message?.content.trim();
+          }
+
           if (generatedCode) {
             tempAreaContent = ''; // 清空内容
             if (tempAreaPanel) {
