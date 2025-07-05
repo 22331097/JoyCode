@@ -8,11 +8,12 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/vs2015.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <style>
         #status {
             text-align: center;
             font-size: 18px;   /* 调大字体，比如18px或20px */
-            color: gray;
+            color: rgb(193, 232, 255);
             display: none;
             font-weight: bold; /* 可选：加粗 */
         }
@@ -21,7 +22,7 @@
             margin: 0;
             padding: 0;
             background-color: var(--vscode-editor-background);
-            color:var(--vscode-editor-foreground);
+            color:white;
             display: flex;
             flex-direction: column;
             height: 100vh;
@@ -54,6 +55,7 @@
             display: flex;
             align-items: flex-start;
             gap: 10px; /* 头像和消息内容之间的间距 */
+            width: 100%;
         }
         .message.user {
             flex-direction: row-reverse; /* 用户消息在右侧显示 */
@@ -62,7 +64,7 @@
             color: var(--vscode-button-foreground);
         }
         .message.ai {
-            flex-direction: row;
+            flex-direction: column;
             align-self: flex-start;
             background-color: var(--vscode-editorHoverWidget-background);
             color: var(--vscode-editorHoverWidget-foreground);
@@ -88,19 +90,19 @@
 
         .message.user div {
             background-color: transparent;
-            color: var(--vscode-button-foreground);
+            color: white;
         }
 
         .message.ai div {
             background-color: var(--vscode-editorHoverWidget-background);
-            color: var(--vscode-editorHoverWidget-foreground);
+            color: white;
         }
         .code-block {
             background-color: #373737 !important;
             border: 1px solid #545353;
             border-radius: 5px;
             padding: 10px;
-            font-family: monospace;
+            font-family: 'JetBrains Mono', monospace !important;
             white-space: pre-wrap;
             position: relative;
         }
@@ -119,7 +121,7 @@
             cursor: pointer;
         }
         .copy-button {
-            color:#bdbdbd;
+            color:white;
             display: flex;
             align-items: center;
             background-color: transparent;
@@ -222,7 +224,7 @@
             margin-bottom: 10px;
             max-width: 70%; /* 限制最大宽度 */
             text-align: center; /* 居中对齐 */
-            margin: 0 auto; /* 水平居中 */
+            margin-left: 100px; /* 水平居中 */
         }
         .regen-btn {
             margin-left: 0;
@@ -231,7 +233,7 @@
             border: none;
             background: transparent;
             cursor: pointer;
-            color: #aaa;
+            color: white;
             font-size: 16px; /* 控制按钮整体大小 */
             display: flex;
             align-items: center;
@@ -310,7 +312,7 @@
             border-radius: 4px;
             cursor: pointer;
             font-size: 14px;
-            color: #fff; /* 白色图标 */
+            color: white; /* 白色图标 */
             box-sizing: border-box;
             transition: background 0.2s;
         }
@@ -339,7 +341,7 @@
         #new-chat-btn {
                 background: transparent;
                 border: none;
-                color: #aaa;
+                color: white;
                 border-radius: 50%;
                 width: 28px;
                 height: 28px;
@@ -354,7 +356,7 @@
         #find-history-btn {
                 background: transparent;
                 border: none;
-                color: #aaa;
+                color: white;
                 border-radius: 50%;
                 width: 28px;
                 height: 28px;
@@ -461,11 +463,11 @@
     <!-- 模态框 -->
 <div id="import-model-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 1000; justify-content: center; align-items: center;">
     <div style="background: #fff; padding: 20px; border-radius: 8px; width: 400px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);">
-        <h3 style="margin-top: 0;">导入模型</h3>
-        <label for="flask-url" style="display: block; margin-bottom: 8px;">请输入您的服务器 URL以连接远程应用：</label>
+        <h3 style="margin-top: 0; color:#7a7b7c;">导入模型</h3>
+        <label for="flask-url" style="display: block; margin-bottom: 8px; color:#7a7b7c;">请输入您的服务器 URL以连接远程应用：</label>
         <input id="flask-url" type="text" placeholder="例如：http://localhost:5000/api" style="width: 100%; padding: 8px; margin-bottom: 16px; border: 1px solid #ccc; border-radius: 4px;">
 
-        <label for="flask-token" style="display: block; margin-bottom: 8px;">Token（可选）：</label>
+        <label for="flask-token" style="display: block; margin-bottom: 8px; color:#7a7b7c;">Token（可选）：</label>
         <input id="flask-token" type="text" placeholder="例如：Bearer abc123" style="width: 100%; padding: 8px; margin-bottom: 16px; border: 1px solid #ccc; border-radius: 4px;">
 
         <div style="text-align: right;">
@@ -668,7 +670,7 @@
                 let iconHtml = '';
                 switch (message.fileType) {
                     case 'javascript':
-                        iconHtml = '<i class="fab fa-js-square" style="color:#f7e018;font-size:18px;"></i>';
+                        iconHtml = '<i class="fab fa-js" style="color:#f7e018;font-size:18px;"></i>';
                         break;
                     case 'python':
                         iconHtml = '<i class="fab fa-python" style="color:#3572A5;font-size:18px;"></i>';
@@ -679,7 +681,12 @@
                     case 'json':
                         iconHtml = '<i class="fas fa-brackets-curly" style="color:#cb3837;font-size:18px;"></i>';
                         break;
-                    // 你可以继续添加更多类型
+                    case 'cpp':
+                        iconHtml = '<i class="fab fa-cplusplus" style="color:#f34b7d;font-size:18px;"></i>';
+                        break;
+                    case 'html':
+                        iconHtml = '<i class="fab fa-html5" style="color:#e34c26;font-size:18px;"></i>';
+                        break;
                     default:
                         iconHtml = '<i class="fas fa-file" style="color:#aaa;font-size:18px;"></i>';
                 }

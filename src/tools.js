@@ -7,6 +7,7 @@ const Python = require('tree-sitter-python');
 const Java = require('tree-sitter-java');
 const JavaScript = require('tree-sitter-javascript');
 
+
 function detectLanguage(code, languageId) {
   if (languageId) return languageId; 
   if (/```(cpp|c\+\+)/i.test(code)) return 'cpp';
@@ -450,8 +451,75 @@ function runCode(lang, code) {
   });
 }
 
+async function extractStructureSummary(fileContent, fileName) {
+  const parser = new Parser();
+  let lang = null;
+  if (fileName.endsWith('.py')) {
+    lang = Python;
+  } else if (fileName.endsWith('.cpp') || fileName.endsWith('.cc') || fileName.endsWith('.cxx') || fileName.endsWith('.hpp') || fileName.endsWith('.h')) {
+    lang = Cpp;
+  } else {
+    lang = Python; // 默认兜底
+  }
+  parser.setLanguage(lang);
+  const tree = parser.parse(fileContent);
+  const summary = [];
+  function walk(node) {
+    // C++: #include
+    if (node.type === 'preproc_call') {
+      summary.push(`#include: ${node.text}`);
+    }
+    // 注释
+    if (node.type === 'comment') {
+      summary.push(`注释: ${node.text}`);
+    }
+    // Python/C++: 函数
+    if (node.type === 'function_definition') {
+      let name = '';
+      // Python: name 字段，C++: declarator/identifier
+      if (node.childForFieldName && node.childForFieldName('name')) {
+        name = node.childForFieldName('name').text;
+      } else if (node.childForFieldName && node.childForFieldName('declarator')) {
+        const decl = node.childForFieldName('declarator');
+        const idNode = decl ? decl.descendantsOfType('identifier')[0] : null;
+        name = idNode ? idNode.text : '匿名';
+      } else {
+        name = '匿名';
+      }
+      summary.push(`函数: ${name}`);
+    }
+    // Python: 类
+    if (node.type === 'class_definition') {
+      let name = '匿名';
+      // 方法1：直接取 name 字段（适用于Python）
+      if (node.childForFieldName('name')) {
+        name = node.childForFieldName('name').text;
+      } 
+      // 方法2：遍历查找 identifier（备用方案）
+      else {
+        const idNode = node.descendantsOfType('identifier')[0];
+        if (idNode) name = idNode.text;
+      }
+      summary.push(`类: ${name}`);
+    }
+    // C++: 类
+    if (node.type === 'class_specifier') {
+      let name = '';
+      const idNode = node.descendantsOfType('type_identifier')[0];
+      name = idNode ? idNode.text : '匿名';
+      summary.push(`类: ${name}`);
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i));
+    }
+  }
+  walk(tree.rootNode);
+  return `【${fileName}结构摘要】\n` + summary.join('\n');
+}
+
 module.exports = {
   detectLanguage,
-  runCode
+  runCode,
+  extractStructureSummary
 };
 
